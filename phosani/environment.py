@@ -40,6 +40,7 @@ ACTIONS = {
     3: "prayer_none",
     4: "eat_food",
     5: "change_gear",
+    6: "attack_husk",
 }
 ACTION_SIZE = len(ACTIONS)
 
@@ -93,14 +94,23 @@ def perform_action(state: Dict[str, Any], action_id: int) -> Dict[str, Any]:
         player["reward"] += player["gear_change_penalty"]
         player["last_action"] = "change_gear"
 
+    elif action_name == "attack_husk":
+        # minimal husk targeting: remove one husk per successful attack
+        if player.get("husk_count", 0) > 0 and player["player_cooldown"] <= 0 and not player["is_eating"]:
+            player["husk_count"] = max(0, player["husk_count"] - 1)
+            dmg = random.randint(5, 15)
+            player["reward"] += dmg * 0.5  # small reward for clearing a husk
+            player["player_cooldown"] = player["weapon_speed"]
+            player["last_action"] = "attack_husk"
+        else:
+            player["reward"] += player["idle_penalty"]
+            player["last_action"] = "attack_husk_failed"
+
     return state
 
 
 class PhosaniEnv:
-    def __init__(self, seed: int = None):
-        if seed is not None:
-            random.seed(seed)
-            np.random.seed(seed)
+    def __init__(self):
         self.reset()
 
     def reset(self) -> Tuple[float, ...]:
@@ -149,6 +159,18 @@ class PhosaniEnv:
             "eat_reward": eat_reward,
             "gear_defensive": False,
             "gear_change_penalty": gear_change_penalty,
+            # husk / pillar mechanics (minimal)
+            "husk_count": 0,
+            "husk_max": 5,
+            "husk_spawn_timer": random.randint(6, 10),
+            "husk_spawn_min": 6,
+            "husk_spawn_max": 10,
+            "husk_damage_min": 2,
+            "husk_damage_max": 6,
+            "pillar_timer": random.randint(18, 26),
+            "pillar_interval_min": 18,
+            "pillar_interval_max": 26,
+            "pillar_warning": False,
             "last_action": None,
         }
         return self._get_obs()
@@ -164,6 +186,8 @@ class PhosaniEnv:
             float(s["player_cooldown"]),
             float(s["active_prayer"]),
             float(s["food_count"]),
+            float(s.get("husk_count", 0)),
+            float(s.get("pillar_timer", 0)),
         )
 
     def step(self, action: int) -> Tuple[Tuple[float, ...], float, bool, Dict[str, Any]]:
@@ -171,12 +195,15 @@ class PhosaniEnv:
         s["tick"] += 1
         s["reward"] = 0.0
 
+        # apply the requested action
         perform_action(s, action)
 
+        # boss attack timing
         s["boss_attack_timer"] -= 1
         if s["boss_attack_timer"] <= 0:
             self._resolve_boss_attack()
 
+        # player cooldowns / eating
         if s["player_cooldown"] > 0:
             s["player_cooldown"] = max(0, s["player_cooldown"] - 1)
 
@@ -186,10 +213,50 @@ class PhosaniEnv:
                 s["is_eating"] = False
                 s["eat_timer"] = 0
 
+        # prayer drain
         if s["active_prayer"] != -1:
             s["prayer_points"] = max(0.0, s["prayer_points"] - s["prayer_drain_per_tick"])
             if s["prayer_points"] <= 0:
                 s["active_prayer"] = -1
+
+        # husk spawn logic
+        s["husk_spawn_timer"] -= 1
+        if s["husk_spawn_timer"] <= 0:
+            # spawn 1-2 husks, up to a cap
+            new_husks = random.randint(1, 2)
+            s["husk_count"] = min(s["husk_max"], s.get("husk_count", 0) + new_husks)
+            s["reward"] -= 0.5 * new_husks  # small penalty for allowing spawns
+            s["husk_spawn_timer"] = random.randint(s["husk_spawn_min"], s["husk_spawn_max"])
+            s["last_action"] = "husk_spawn"
+
+        # husks deal damage each tick if present
+        if s.get("husk_count", 0) > 0:
+            total_husk_damage = 0
+            # each husk does a small damage hit per tick
+            for _ in range(s["husk_count"]):
+                total_husk_damage += random.randint(s["husk_damage_min"], s["husk_damage_max"])
+            if s.get("gear_defensive", False):
+                total_husk_damage = int(total_husk_damage * 0.9)
+            s["player_hp"] = max(0, s["player_hp"] - total_husk_damage)
+            s["reward"] -= float(total_husk_damage) * 0.5
+            s["last_husk_hit"] = total_husk_damage
+
+        # pillar attack telegraph and execution
+        s["pillar_timer"] -= 1
+        if s["pillar_timer"] == 1:
+            # telegraph: warning that a pillar will hit next tick
+            s["pillar_warning"] = True
+        if s["pillar_timer"] <= 0:
+            # pillar lands now
+            s["pillar_warning"] = False
+            pillar_dmg = random.randint(15, 35)
+            # pillar is a heavy hit that partially ignores prayer but is reduced by gear
+            if s.get("gear_defensive", False):
+                pillar_dmg = int(pillar_dmg * 0.9)
+            s["player_hp"] = max(0, s["player_hp"] - pillar_dmg)
+            s["reward"] -= float(pillar_dmg)
+            s["pillar_timer"] = random.randint(s["pillar_interval_min"], s["pillar_interval_max"])
+            s["last_action"] = "pillar_hit"
 
         done = False
         reward = s["reward"]
@@ -230,7 +297,8 @@ class PhosaniEnv:
             f"Tick {s['tick']:04d} | Boss HP: {s['boss_hp']:3d} | "
             f"Player HP: {s['player_hp']:3d} | Food: {s['food_count']} | "
             f"Cooldown: {s['player_cooldown']} | EatTimer: {s['eat_timer']} | "
-            f"Prayer: {s['active_prayer']} | BossAttackIn: {s['boss_attack_timer']}"
+            f"Prayer: {s['active_prayer']} | BossAttackIn: {s['boss_attack_timer']} | "
+            f"Husks: {s.get('husk_count', 0)} | PillarIn: {s.get('pillar_timer', 0)}"
         )
 
 
@@ -313,7 +381,7 @@ def one_hot(actions: np.ndarray, num_actions: int) -> np.ndarray:
 # -----------------------
 if __name__ == "__main__":
     # env and dims
-    env = PhosaniEnv(seed=0)
+    env = PhosaniEnv()
     obs = env.reset()
     state_dim = len(obs)
     action_dim = ACTION_SIZE
@@ -476,7 +544,7 @@ if __name__ == "__main__":
         eval_every = 20
         eval_episodes = 5
         if (ep + 1) % eval_every == 0:
-            eval_env = PhosaniEnv(seed=None)
+            eval_env = PhosaniEnv()
             avg_reward, avg_len = evaluate_policy(jitted_q, eval_env, eval_episodes=eval_episodes)
             print(f"  >>> Eval over {eval_episodes} greedy episodes: AvgReward {avg_reward:.2f}, AvgLen {avg_len:.1f}")
 
