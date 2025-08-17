@@ -1,9 +1,7 @@
-# Learning Machine Learning to cheat at OSRS
+# Machine Learning
 
-not really, its all simulated. But I'm teaching neural nets to play old school runescape with simulated boss battles.
+Hands-on machine learning from the ground up.
 
-DQN, PPO etc
+Because if I want to touch every layer of the stack.
 
-TL/DR - build a simulated environment with ticks, boss info, attacks, health, food, gear etc, represent that as a vector, and train NNs to take action and through reinforcement learning, defeat the boss.
-
-Starting with Phosani
+- Proximity Policy optimization - I taught a NN to prayer flick in Old School Runescape

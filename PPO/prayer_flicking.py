@@ -43,7 +43,7 @@ class Prayer_Flick_Env:
             self.ticks_until_damage = 4
         else:
             if self.prayer_state == -1: # no prayer active
-                reward += 0.5 # saving prayer points
+                reward += 0.25 # saving prayer points
         
         self.total_reward += reward
         return self._get_obs(), reward
