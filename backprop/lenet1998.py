@@ -5,7 +5,8 @@ import tinygrad.nn as nn
 from tinygrad.nn.datasets import mnist
 from tqdm import trange
 
-# (MNIST is 28x28)
+# original LeNet padded MNIST to 32 x 32,
+# not doing that here, so input is 28 x 28
 
 class LeNet5:
     def __init__(self):

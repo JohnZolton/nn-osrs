@@ -10,4 +10,4 @@ We start at the end and work backwards, scaling the blame to each neuron accordi
 
 per [LeCun 1998](http://vision.stanford.edu/cs598_spring07/papers/Lecun98.pdf)
 
-backprop with convolution + pooling
+Core intuition: add convolutional layers and pooling layers to reduce parameter count while retaining accuracy. Error is backprop'd through the fully connected, pooled and convolutional layers and blame is distributed accordingly
